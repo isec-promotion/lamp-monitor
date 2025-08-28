@@ -1,0 +1,58 @@
+# Lamp Monitor Configuration
+
+# カメラ設定
+camera:
+  size: [1280, 720] # 解像度 [width, height]
+  fps: 20 # フレームレート
+  device_id: 0 # カメラデバイスID
+
+# 通知設定
+notify:
+  worker_url: "https://pi-detection.tai-nakamura.workers.dev" # Cloudflare Workers URL
+  secret: "pA!M.k_)!$G.vABQ9aeQmPNM" # 共通鍵（cloudflare-worker-simple.jsのALLOWED_SECRETと一致）
+  min_interval_sec: 5 # 同一ランプの再通知最短間隔（秒）- テスト用に短縮
+
+# 判定ロジック設定
+logic:
+  # HSV色域閾値
+  red_hue_range: [[0, 10], [170, 180]] # 赤色相範囲
+  red_sat_min: 100 # 赤彩度最小値
+  red_val_min: 50 # 赤明度最小値
+
+  green_hue_range: [40, 80] # 緑色相範囲
+  green_sat_min: 100 # 緑彩度最小値
+  green_val_min: 50 # 緑明度最小値
+
+  # 判定閾値
+  red_ratio_thresh: 0.3 # 赤判定の面積比閾値
+  green_ratio_thresh: 0.3 # 緑判定の面積比閾値
+  min_brightness_v: 30 # 最小明度（暗部ノイズ除外）
+
+  # 形態学的処理
+  morphological_kernel: 3 # カーネルサイズ
+
+  # 多数決フィルタ
+  frames_window: 5 # 判定窓フレーム数
+
+# ROI設定（ランプ1-12の矩形座標 [x, y, width, height]）
+# 合成ダッシュボード用の初期値
+rois:
+  lamp_1: [50, 50, 80, 40]
+  lamp_2: [150, 50, 80, 40]
+  lamp_3: [250, 50, 80, 40]
+  lamp_4: [350, 50, 80, 40]
+  lamp_5: [50, 120, 80, 40]
+  lamp_6: [150, 120, 80, 40]
+  lamp_7: [250, 120, 80, 40]
+  lamp_8: [350, 120, 80, 40]
+  lamp_9: [50, 190, 80, 40]
+  lamp_10: [150, 190, 80, 40]
+  lamp_11: [250, 190, 80, 40]
+  lamp_12: [350, 190, 80, 40]
+
+# 合成ダッシュボード設定
+synthetic:
+  window_size: [500, 300] # ダッシュボードウィンドウサイズ
+  lamp_size: [80, 40] # ランプサイズ
+  background_color: [50, 50, 50] # 背景色 (BGR)
+  text_color: [255, 255, 255] # テキスト色 (BGR)
