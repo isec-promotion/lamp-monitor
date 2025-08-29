@@ -7,7 +7,7 @@
 ## ファイル構成
 
 ```
-dashboard-detection/
+lamp-monitor/
 ├── README.md                 # プロジェクト概要
 ├── SETUP.md                  # このファイル（セットアップガイド）
 ├── config.yaml               # 設定ファイル
@@ -15,7 +15,12 @@ dashboard-detection/
 ├── monitor_synthetic.py      # 合成フレーム監視
 ├── monitor_webcam.py         # Webカメラ監視
 ├── roi_tool.py               # ROI設定ツール
-└── cloudflare-worker.js      # Cloudflare Workers用スクリプト
+├── cloudflare-worker.js      # Cloudflare Workers用スクリプト
+├── cloudflare-worker-simple.js # シンプル版Cloudflare Workers用スクリプト
+└── utils/                    # ユーティリティツール
+    ├── camera_debug.py       # カメラデバッグツール
+    ├── monitor_webcam_old.py # 旧版Webカメラ監視
+    └── test_camera.py        # カメラテストツール
 ```
 
 ## セットアップ手順
