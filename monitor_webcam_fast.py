@@ -40,6 +40,13 @@ class LampDetector:
         self.notify_config = self.config["notify"]
         self.rois = self.config["rois"]
         
+        # 通知バッチ処理用
+        self.pending_notifications = []
+        self.last_batch_notification = 0.0
+        self.batch_interval = 3.0  # 3秒間隔でバッチ通知（より長い待機時間）
+        self.first_red_detection_time = None  # 最初の赤色検出時刻
+        self.batch_collection_window = 2.0  # 赤色検出後の収集期間
+        
         print("ランプ検出システムを初期化しました（遅延初期化モード）")
     
     def _lazy_init(self):
@@ -184,9 +191,9 @@ class LampDetector:
                 
                 print(f"ランプ {lamp_id}: {old_state} → {final_state} (信頼度: {final_confidence:.2f}, 合意率: {majority_ratio:.2f})")
                 
-                # 赤色検出時は通知
+                # 赤色検出時はバッチ通知に追加
                 if final_state == "RED":
-                    self.send_notification(lamp_id, final_state, final_confidence)
+                    self.add_to_batch_notification(lamp_id, final_state, final_confidence)
     
     def send_notification(self, lamp_id: int, state: str, confidence: float):
         """Cloudflare Workersに通知を送信"""
@@ -239,6 +246,138 @@ class LampDetector:
                 
         except requests.RequestException as e:
             print(f"ランプ {lamp_id}: 通知送信エラー - {e}")
+    
+    def add_to_batch_notification(self, lamp_id: int, state: str, confidence: float):
+        """バッチ通知に追加（改善版：すべてのランプをまとめて通知）"""
+        current_time = time.time()
+        last_notification = self.lamp_statuses[lamp_id].last_notification
+        min_interval = self.notify_config["min_interval_sec"]
+        
+        # 通知間隔チェック
+        if current_time - last_notification < min_interval:
+            print(f"ランプ {lamp_id}: 通知間隔が短いためスキップ ({current_time - last_notification:.1f}秒)")
+            return
+        
+        # 最初の赤色検出時刻を記録
+        if self.first_red_detection_time is None:
+            self.first_red_detection_time = current_time
+            print(f"最初の赤色検出: ランプ {lamp_id} (収集期間開始)")
+        
+        # 既に同じランプがバッチに含まれているかチェック
+        for notification in self.pending_notifications:
+            if notification["lamp_id"] == lamp_id:
+                # 既存の通知を更新
+                notification["confidence"] = confidence
+                notification["timestamp"] = int(current_time)
+                print(f"ランプ {lamp_id}: バッチ通知を更新")
+                return
+        
+        # 新しい通知をバッチに追加
+        notification_data = {
+            "lamp_id": lamp_id,
+            "state": state,
+            "confidence": confidence,
+            "timestamp": int(current_time)
+        }
+        self.pending_notifications.append(notification_data)
+        print(f"ランプ {lamp_id}: バッチ通知に追加 (バッチサイズ: {len(self.pending_notifications)})")
+        
+        # 即座に送信せず、収集期間の終了を待つ
+        # check_and_send_batch_notification()は定期的に呼び出される
+    
+    def check_and_send_batch_notification(self):
+        """バッチ通知の送信チェック（改善版：収集期間ベース）"""
+        current_time = time.time()
+        
+        # バッチが空の場合は何もしない
+        if not self.pending_notifications:
+            # 最初の検出時刻もリセット
+            self.first_red_detection_time = None
+            return
+        
+        # 最初の赤色検出から収集期間が経過したかチェック
+        if (self.first_red_detection_time is not None and 
+            current_time - self.first_red_detection_time >= self.batch_collection_window):
+            print(f"収集期間終了 ({self.batch_collection_window}秒経過) - バッチ通知送信")
+            self.send_batch_notification()
+            # 最初の検出時刻をリセット
+            self.first_red_detection_time = None
+        
+        # 従来のバッチ間隔チェックも維持（フォールバック）
+        elif current_time - self.last_batch_notification >= self.batch_interval:
+            print(f"バッチ間隔経過 ({self.batch_interval}秒) - バッチ通知送信")
+            self.send_batch_notification()
+            # 最初の検出時刻をリセット
+            self.first_red_detection_time = None
+    
+    def send_batch_notification(self):
+        """バッチ通知を送信（改善版：すべてのランプを統一形式で通知）"""
+        if not self.pending_notifications:
+            return
+        
+        current_time = time.time()
+        
+        # すべてのランプを統一形式でまとめて通知
+        lamp_ids = sorted([n['lamp_id'] for n in self.pending_notifications])
+        lamp_ids_str = [str(lamp_id) for lamp_id in lamp_ids]
+        lamp_list = ", ".join(lamp_ids_str)
+        
+        if len(self.pending_notifications) == 1:
+            # 単一ランプの場合も統一形式
+            message = f"ランプが RED 状態になりました: ランプ {lamp_list} (1個)"
+        else:
+            # 複数ランプの場合
+            message = f"複数のランプが RED 状態になりました: ランプ {lamp_list} ({len(self.pending_notifications)}個)"
+        
+        # 通知データ作成（代表として最初のランプの情報を使用）
+        representative_notification = self.pending_notifications[0]
+        notification_data = {
+            "timestamp": int(current_time),
+            "lamp_id": representative_notification["lamp_id"],
+            "state": "RED",
+            "confidence": representative_notification["confidence"],
+            "message": message,
+            "batch_size": len(self.pending_notifications),
+            "lamp_ids": lamp_ids  # ソート済みのリスト
+        }
+        
+        # 署名を生成
+        signature = self.create_signature(notification_data)
+        
+        # ヘッダーに署名を追加
+        headers = {
+            "Content-Type": "application/json",
+            "X-Signature-256": signature
+        }
+        
+        try:
+            request_url = self.notify_config["worker_url"]
+            data_payload = json.dumps(notification_data, sort_keys=True)
+            
+            print(f"バッチ通知送信: {len(self.pending_notifications)}個のランプ")
+            print(f"通知データ: {data_payload}")
+            
+            response = requests.post(
+                request_url,
+                data=data_payload.encode('utf-8'),
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print(f"バッチ通知送信成功: ランプ {[n['lamp_id'] for n in self.pending_notifications]}")
+                # 通知済みランプの最終通知時刻を更新
+                for notification in self.pending_notifications:
+                    self.lamp_statuses[notification["lamp_id"]].last_notification = current_time
+            else:
+                print(f"バッチ通知送信失敗 (HTTP {response.status_code}) - {response.text}")
+                
+        except requests.RequestException as e:
+            print(f"バッチ通知送信エラー - {e}")
+        finally:
+            # バッチをクリア
+            self.pending_notifications.clear()
+            self.last_batch_notification = current_time
     
     def create_signature(self, data: Dict) -> str:
         """HMAC署名を作成"""
@@ -397,6 +536,9 @@ class WebcamMonitorFast:
                 
                 # フレーム処理
                 self.detector.process_frame(frame)
+                
+                # バッチ通知の定期チェック（画面フリーズ対策）
+                self.detector.check_and_send_batch_notification()
                 
                 # デバッグ用オーバーレイを描画
                 display_frame = self.detector.draw_debug_overlay(frame)
