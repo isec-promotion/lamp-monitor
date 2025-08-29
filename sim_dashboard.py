@@ -21,15 +21,15 @@ class SyntheticDashboard:
         self.window_closed = False  # ウィンドウが閉じられたかのフラグ
         
         # 設定値の取得
-        self.window_size = self.config["synthetic"]["window_size"]
-        self.lamp_size = self.config["synthetic"]["lamp_size"]
+        self.default_window_size = self.config["synthetic"]["window_size"]
+        self.current_window_size = self.default_window_size.copy()
+        self.default_lamp_size = self.config["synthetic"]["lamp_size"]
         self.bg_color = tuple(self.config["synthetic"]["background_color"])
         self.text_color = tuple(self.config["synthetic"]["text_color"])
         
-        # ウィンドウ作成
-        cv2.namedWindow("Synthetic Dashboard", cv2.WINDOW_AUTOSIZE)
-        # ウィンドウクローズコールバックを設定
-        cv2.setWindowProperty("Synthetic Dashboard", cv2.WND_PROP_TOPMOST, 0)
+        # ウィンドウ作成（リサイズ可能に変更）
+        cv2.namedWindow("Synthetic Dashboard", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Synthetic Dashboard", self.default_window_size[0], self.default_window_size[1])
         
     def load_config(self, config_path: str) -> Dict:
         """設定ファイルを読み込み"""
@@ -43,21 +43,55 @@ class SyntheticDashboard:
             print(f"設定ファイルの読み込みエラー: {e}")
             raise
     
+    def update_window_size(self):
+        """現在のウィンドウサイズを取得して更新"""
+        try:
+            # ウィンドウの実際のサイズを取得
+            rect = cv2.getWindowImageRect("Synthetic Dashboard")
+            if rect[2] > 0 and rect[3] > 0:  # 有効なサイズの場合
+                self.current_window_size = [rect[2], rect[3]]
+        except:
+            # 取得できない場合はデフォルトサイズを使用
+            self.current_window_size = self.default_window_size.copy()
+    
+    def get_dynamic_sizes(self):
+        """現在のウィンドウサイズに基づいて動的サイズを計算"""
+        # スケール比を計算
+        scale_x = self.current_window_size[0] / self.default_window_size[0]
+        scale_y = self.current_window_size[1] / self.default_window_size[1]
+        scale = min(scale_x, scale_y)  # アスペクト比を保持
+        
+        # ランプサイズを調整
+        lamp_w = int(self.default_lamp_size[0] * scale)
+        lamp_h = int(self.default_lamp_size[1] * scale)
+        
+        # マージンとスペーシングを調整
+        margin_x = int(50 * scale_x)
+        margin_y = int(50 * scale_y)
+        spacing_x = int(100 * scale_x)
+        spacing_y = int(70 * scale_y)
+        
+        return (lamp_w, lamp_h), margin_x, margin_y, spacing_x, spacing_y
+    
     def get_lamp_position(self, lamp_id: int) -> Tuple[int, int]:
-        """ランプIDから表示位置を計算"""
+        """ランプIDから表示位置を計算（動的サイズ対応）"""
         # 4x3のグリッドレイアウト
         col = (lamp_id - 1) % 4
         row = (lamp_id - 1) // 4
         
-        x = 50 + col * 100
-        y = 50 + row * 70
+        # 動的サイズを取得
+        _, margin_x, margin_y, spacing_x, spacing_y = self.get_dynamic_sizes()
+        
+        x = margin_x + col * spacing_x
+        y = margin_y + row * spacing_y
         
         return x, y
     
     def draw_lamp(self, frame: np.ndarray, lamp_id: int, state: str, is_blinking: bool = False):
         """ランプを描画"""
         x, y = self.get_lamp_position(lamp_id)
-        w, h = self.lamp_size
+        lamp_size, _, _, _, _ = self.get_dynamic_sizes()
+        w, h = lamp_size
         
         # 点滅処理
         if is_blinking and not self.blink_on:
@@ -74,16 +108,22 @@ class SyntheticDashboard:
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, -1)
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 255), 2)
         
-        # ランプ番号を描画
+        # ランプ番号を描画（動的フォントサイズ）
+        scale_x = self.current_window_size[0] / self.default_window_size[0]
+        scale_y = self.current_window_size[1] / self.default_window_size[1]
+        font_scale = min(scale_x, scale_y) * 0.7
+        thickness = max(1, int(min(scale_x, scale_y) * 2))
+        
         text = str(lamp_id)
-        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
         text_x = x + (w - text_size[0]) // 2
         text_y = y + (h + text_size[1]) // 2
-        cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
     
     def create_frame(self) -> np.ndarray:
-        """フレームを生成"""
-        frame = np.full((self.window_size[1], self.window_size[0], 3), self.bg_color, dtype=np.uint8)
+        """フレームを生成（動的サイズ対応）"""
+        # 現在のウィンドウサイズでフレームを作成
+        frame = np.full((self.current_window_size[1], self.current_window_size[0], 3), self.bg_color, dtype=np.uint8)
         
         # 点滅タイマー更新
         current_time = time.time()
@@ -98,7 +138,12 @@ class SyntheticDashboard:
             is_blinking = self.blink_states[i]
             self.draw_lamp(frame, lamp_id, state, is_blinking)
         
-        # 操作説明を描画
+        # 動的スケールを取得
+        scale_x = self.current_window_size[0] / self.default_window_size[0]
+        scale_y = self.current_window_size[1] / self.default_window_size[1]
+        font_scale = min(scale_x, scale_y) * 0.4
+        
+        # 操作説明を描画（動的サイズ対応）
         instructions = [
             "Controls:",
             "1-0: Toggle L1-L10 , -: Toggle L11, =: Toggle L12",
@@ -106,10 +151,13 @@ class SyntheticDashboard:
             "s: Save Image, q: Quit"
         ]
         
-        y_offset = self.window_size[1] - 55
+        y_offset = self.current_window_size[1] - int(55 * scale_y)
+        line_height = int(15 * scale_y)
+        margin_x = int(10 * scale_x)
+        
         for i, instruction in enumerate(instructions):
-            cv2.putText(frame, instruction, (10, y_offset + i * 15), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, self.text_color, 1)
+            cv2.putText(frame, instruction, (margin_x, y_offset + i * line_height), 
+                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, self.text_color, 1)
         
         return frame
     
@@ -171,6 +219,9 @@ class SyntheticDashboard:
         
         try:
             while True:
+                # ウィンドウサイズを更新
+                self.update_window_size()
+                
                 # フレーム生成と表示
                 frame = self.create_frame()
                 
