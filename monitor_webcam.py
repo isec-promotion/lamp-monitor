@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Webカメラ監視システム - Webカメラからフレームを取得し、ランプ状態を判定してCloudflare Workersに通知
+Webカメラ監視システム（高速化版） - 起動時間を最適化
 """
 
 import cv2
@@ -24,35 +24,39 @@ class LampStatus:
     last_notification: float = 0.0
 
 class LampDetector:
-    """ランプ検出・判定クラス"""
+    """ランプ検出・判定クラス（高速化版）"""
     
-    def __init__(self, config_path: str = "config.yaml"):
-        """初期化"""
-        self.config = self.load_config(config_path)
-        self.lamp_history = {i: deque(maxlen=self.config["logic"]["frames_window"]) 
-                           for i in range(1, 13)}
-        self.lamp_statuses = {i: LampStatus(i, "UNKNOWN", 0.0) for i in range(1, 13)}
+    def __init__(self, config: Dict):
+        """初期化（設定を直接受け取り）"""
+        self.config = config
+        
+        # 遅延初期化用フラグ
+        self._initialized = False
+        self.lamp_history = None
+        self.lamp_statuses = None
         
         # 設定値の取得
         self.logic_config = self.config["logic"]
         self.notify_config = self.config["notify"]
         self.rois = self.config["rois"]
         
-        print("ランプ検出システムを初期化しました")
-        print(f"フレーム窓サイズ: {self.logic_config['frames_window']}")
-        print(f"通知間隔: {self.notify_config['min_interval_sec']}秒")
+        # 通知バッチ処理用
+        self.pending_notifications = []
+        self.last_batch_notification = 0.0
+        self.batch_interval = 3.0  # 3秒間隔でバッチ通知（より長い待機時間）
+        self.first_red_detection_time = None  # 最初の赤色検出時刻
+        self.batch_collection_window = 2.0  # 赤色検出後の収集期間
+        
+        print("ランプ検出システムを初期化しました（遅延初期化モード）")
     
-    def load_config(self, config_path: str) -> Dict:
-        """設定ファイルを読み込み"""
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
-        except FileNotFoundError:
-            print(f"設定ファイル {config_path} が見つかりません")
-            raise
-        except yaml.YAMLError as e:
-            print(f"設定ファイルの読み込みエラー: {e}")
-            raise
+    def _lazy_init(self):
+        """遅延初期化 - 最初のフレーム処理時に実行"""
+        if not self._initialized:
+            self.lamp_history = {i: deque(maxlen=self.logic_config["frames_window"]) 
+                               for i in range(1, 13)}
+            self.lamp_statuses = {i: LampStatus(i, "UNKNOWN", 0.0) for i in range(1, 13)}
+            self._initialized = True
+            print(f"遅延初期化完了 - フレーム窓サイズ: {self.logic_config['frames_window']}")
     
     def extract_roi(self, frame: np.ndarray, lamp_id: int) -> Optional[np.ndarray]:
         """ROI領域を抽出"""
@@ -94,7 +98,7 @@ class LampDetector:
         return "UNKNOWN", 0.0
     
     def calculate_red_ratio(self, hsv: np.ndarray, bright_mask: np.ndarray) -> float:
-        """赤色の面積比を計算"""
+        """赤色の面積比を計算（元のロジックベース）"""
         red_hue_ranges = self.logic_config["red_hue_range"]
         red_sat_min = self.logic_config["red_sat_min"]
         red_val_min = self.logic_config["red_val_min"]
@@ -146,7 +150,10 @@ class LampDetector:
         return green_pixels / total_pixels if total_pixels > 0 else 0.0
     
     def update_lamp_status(self, lamp_id: int, state: str, confidence: float):
-        """ランプ状態を更新（多数決フィルタ適用）"""
+        """ランプ状態を更新（多数決フィルタ適用）- 誤検知対策強化版"""
+        # 遅延初期化
+        self._lazy_init()
+        
         # 履歴に追加
         self.lamp_history[lamp_id].append((state, confidence))
         
@@ -156,9 +163,25 @@ class LampDetector:
             state_counts = {s: states.count(s) for s in set(states)}
             final_state = max(state_counts, key=state_counts.get)
             
-            # 信頼度は平均値
-            confidences = [item[1] for item in self.lamp_history[lamp_id] if item[0] == final_state]
-            final_confidence = np.mean(confidences) if confidences else 0.0
+            # 誤検知対策1: 多数決の閾値チェック
+            total_frames = len(self.lamp_history[lamp_id])
+            majority_count = state_counts[final_state]
+            majority_ratio = majority_count / total_frames
+            
+            # 過半数を超えない場合はUNKNOWNとする
+            if majority_ratio < 0.6:  # 60%以上の合意が必要
+                final_state = "UNKNOWN"
+                final_confidence = 0.0
+            else:
+                # 信頼度は平均値
+                confidences = [item[1] for item in self.lamp_history[lamp_id] if item[0] == final_state]
+                final_confidence = np.mean(confidences) if confidences else 0.0
+                
+                # 誤検知対策2: 信頼度の最小閾値チェック
+                min_confidence_thresh = 0.4  # 最小信頼度閾値
+                if final_confidence < min_confidence_thresh:
+                    final_state = "UNKNOWN"
+                    final_confidence = 0.0
             
             # 状態が変化した場合のみ更新
             if self.lamp_statuses[lamp_id].state != final_state:
@@ -166,11 +189,11 @@ class LampDetector:
                 self.lamp_statuses[lamp_id].state = final_state
                 self.lamp_statuses[lamp_id].confidence = final_confidence
                 
-                print(f"ランプ {lamp_id}: {old_state} → {final_state} (信頼度: {final_confidence:.2f})")
+                print(f"ランプ {lamp_id}: {old_state} → {final_state} (信頼度: {final_confidence:.2f}, 合意率: {majority_ratio:.2f})")
                 
-                # 赤色検出時は通知
+                # 赤色検出時はバッチ通知に追加
                 if final_state == "RED":
-                    self.send_notification(lamp_id, final_state, final_confidence)
+                    self.add_to_batch_notification(lamp_id, final_state, final_confidence)
     
     def send_notification(self, lamp_id: int, state: str, confidence: float):
         """Cloudflare Workersに通知を送信"""
@@ -192,27 +215,25 @@ class LampDetector:
             "message": f"ランプ {lamp_id} が {state} 状態になりました",
         }
 
-        # ★ 署名を生成
+        # 署名を生成
         signature = self.create_signature(notification_data)
     
-        # ★ ヘッダーに署名を追加
+        # ヘッダーに署名を追加
         headers = {
             "Content-Type": "application/json",
-            "X-Signature-256": signature  # 署名をヘッダーに追加
+            "X-Signature-256": signature
         }
         
         try:
             request_url = self.notify_config["worker_url"]
-            # dumpsを使用してデータをJSON文字列に変換
             data_payload = json.dumps(notification_data, sort_keys=True)
             
             print(f"通知送信先URL: {request_url}")
             print(f"通知データ: {data_payload}")
-            print(f"ヘッダー: {headers}")
 
             response = requests.post(
                 request_url,
-                data=data_payload.encode('utf-8'), # data引数でバイトとして送信
+                data=data_payload.encode('utf-8'),
                 headers=headers,
                 timeout=10
             )
@@ -226,10 +247,141 @@ class LampDetector:
         except requests.RequestException as e:
             print(f"ランプ {lamp_id}: 通知送信エラー - {e}")
     
+    def add_to_batch_notification(self, lamp_id: int, state: str, confidence: float):
+        """バッチ通知に追加（改善版：すべてのランプをまとめて通知）"""
+        current_time = time.time()
+        last_notification = self.lamp_statuses[lamp_id].last_notification
+        min_interval = self.notify_config["min_interval_sec"]
+        
+        # 通知間隔チェック
+        if current_time - last_notification < min_interval:
+            print(f"ランプ {lamp_id}: 通知間隔が短いためスキップ ({current_time - last_notification:.1f}秒)")
+            return
+        
+        # 最初の赤色検出時刻を記録
+        if self.first_red_detection_time is None:
+            self.first_red_detection_time = current_time
+            print(f"最初の赤色検出: ランプ {lamp_id} (収集期間開始)")
+        
+        # 既に同じランプがバッチに含まれているかチェック
+        for notification in self.pending_notifications:
+            if notification["lamp_id"] == lamp_id:
+                # 既存の通知を更新
+                notification["confidence"] = confidence
+                notification["timestamp"] = int(current_time)
+                print(f"ランプ {lamp_id}: バッチ通知を更新")
+                return
+        
+        # 新しい通知をバッチに追加
+        notification_data = {
+            "lamp_id": lamp_id,
+            "state": state,
+            "confidence": confidence,
+            "timestamp": int(current_time)
+        }
+        self.pending_notifications.append(notification_data)
+        print(f"ランプ {lamp_id}: バッチ通知に追加 (バッチサイズ: {len(self.pending_notifications)})")
+        
+        # 即座に送信せず、収集期間の終了を待つ
+        # check_and_send_batch_notification()は定期的に呼び出される
+    
+    def check_and_send_batch_notification(self):
+        """バッチ通知の送信チェック（改善版：収集期間ベース）"""
+        current_time = time.time()
+        
+        # バッチが空の場合は何もしない
+        if not self.pending_notifications:
+            # 最初の検出時刻もリセット
+            self.first_red_detection_time = None
+            return
+        
+        # 最初の赤色検出から収集期間が経過したかチェック
+        if (self.first_red_detection_time is not None and 
+            current_time - self.first_red_detection_time >= self.batch_collection_window):
+            print(f"収集期間終了 ({self.batch_collection_window}秒経過) - バッチ通知送信")
+            self.send_batch_notification()
+            # 最初の検出時刻をリセット
+            self.first_red_detection_time = None
+        
+        # 従来のバッチ間隔チェックも維持（フォールバック）
+        elif current_time - self.last_batch_notification >= self.batch_interval:
+            print(f"バッチ間隔経過 ({self.batch_interval}秒) - バッチ通知送信")
+            self.send_batch_notification()
+            # 最初の検出時刻をリセット
+            self.first_red_detection_time = None
+    
+    def send_batch_notification(self):
+        """バッチ通知を送信（改善版：すべてのランプを統一形式で通知）"""
+        if not self.pending_notifications:
+            return
+        
+        current_time = time.time()
+        
+        # すべてのランプを統一形式でまとめて通知
+        lamp_ids = sorted([n['lamp_id'] for n in self.pending_notifications])
+        lamp_ids_str = [str(lamp_id) for lamp_id in lamp_ids]
+        lamp_list = ", ".join(lamp_ids_str)
+        
+        if len(self.pending_notifications) == 1:
+            # 単一ランプの場合も統一形式
+            message = f"ランプが RED 状態になりました: ランプ {lamp_list} (1個)"
+        else:
+            # 複数ランプの場合
+            message = f"複数のランプが RED 状態になりました: ランプ {lamp_list} ({len(self.pending_notifications)}個)"
+        
+        # 通知データ作成（代表として最初のランプの情報を使用）
+        representative_notification = self.pending_notifications[0]
+        notification_data = {
+            "timestamp": int(current_time),
+            "lamp_id": representative_notification["lamp_id"],
+            "state": "RED",
+            "confidence": representative_notification["confidence"],
+            "message": message,
+            "batch_size": len(self.pending_notifications),
+            "lamp_ids": lamp_ids  # ソート済みのリスト
+        }
+        
+        # 署名を生成
+        signature = self.create_signature(notification_data)
+        
+        # ヘッダーに署名を追加
+        headers = {
+            "Content-Type": "application/json",
+            "X-Signature-256": signature
+        }
+        
+        try:
+            request_url = self.notify_config["worker_url"]
+            data_payload = json.dumps(notification_data, sort_keys=True)
+            
+            print(f"バッチ通知送信: {len(self.pending_notifications)}個のランプ")
+            print(f"通知データ: {data_payload}")
+            
+            response = requests.post(
+                request_url,
+                data=data_payload.encode('utf-8'),
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print(f"バッチ通知送信成功: ランプ {[n['lamp_id'] for n in self.pending_notifications]}")
+                # 通知済みランプの最終通知時刻を更新
+                for notification in self.pending_notifications:
+                    self.lamp_statuses[notification["lamp_id"]].last_notification = current_time
+            else:
+                print(f"バッチ通知送信失敗 (HTTP {response.status_code}) - {response.text}")
+                
+        except requests.RequestException as e:
+            print(f"バッチ通知送信エラー - {e}")
+        finally:
+            # バッチをクリア
+            self.pending_notifications.clear()
+            self.last_batch_notification = current_time
+    
     def create_signature(self, data: Dict) -> str:
         """HMAC署名を作成"""
         secret = self.notify_config["secret"].encode('utf-8')
-        # ★ requestsで送るペイロードと完全に同じものから署名を生成
         message = json.dumps(data, sort_keys=True).encode('utf-8')
         signature = hmac.new(secret, message, hashlib.sha256).hexdigest()
         return f"sha256={signature}"
@@ -244,6 +396,9 @@ class LampDetector:
     
     def draw_debug_overlay(self, frame: np.ndarray) -> np.ndarray:
         """デバッグ用のオーバーレイを描画"""
+        # 遅延初期化
+        self._lazy_init()
+        
         overlay_frame = frame.copy()
         
         # ROI矩形を描画
@@ -271,19 +426,25 @@ class LampDetector:
         
         return overlay_frame
 
-class WebcamMonitor:
-    """Webカメラ監視システム"""
+class WebcamMonitorFast:
+    """Webカメラ監視システム（高速化版）"""
     
     def __init__(self, config_path: str = "config.yaml"):
         """初期化"""
+        print("設定ファイル読み込み中...")
         self.config = self.load_config(config_path)
-        self.detector = LampDetector(config_path)
+        
+        print("検出器初期化中...")
+        self.detector = LampDetector(self.config)
+        
         self.cap = None
         self.running = False
         
         # カメラ設定
         self.camera_config = self.config["camera"]
         
+        print("初期化完了")
+    
     def load_config(self, config_path: str) -> Dict:
         """設定ファイルを読み込み"""
         try:
@@ -296,111 +457,52 @@ class WebcamMonitor:
             print(f"設定ファイルの読み込みエラー: {e}")
             raise
     
-    def try_device_name_initialization(self):
-        """デバイス名を使用してカメラを初期化"""
-        # C922 Pro Stream Webcamの一般的なデバイス名パターン
-        device_names = [
-            "C922 Pro Stream Webcam",
-            "Logitech C922 Pro Stream Webcam",
-            "USB Camera",
-            "Integrated Camera",
-        ]
-        
-        for device_name in device_names:
-            try:
-                cap = cv2.VideoCapture(device_name, cv2.CAP_DSHOW)
-                if cap.isOpened():
-                    print(f"デバイス名 '{device_name}' で接続成功")
-                    return cap
-                cap.release()
-            except:
-                continue
-        
-        return None
-    
-    def initialize_camera(self) -> bool:
-        """カメラを初期化（複数の方法を試行）"""
+    def initialize_camera_fast(self) -> bool:
+        """カメラを高速初期化（最適化版）"""
         device_id = self.camera_config["device_id"]
         
-        # 複数のバックエンドと初期化方法を試行
-        initialization_methods = [
-            ("デフォルト", lambda: cv2.VideoCapture(device_id)),
-            ("DSHOW", lambda: cv2.VideoCapture(device_id, cv2.CAP_DSHOW)),
-            ("MSMF", lambda: cv2.VideoCapture(device_id, cv2.CAP_MSMF)),
-            ("デバイス名指定", lambda: self.try_device_name_initialization()),
-        ]
+        print(f"カメラ初期化中... (デバイスID: {device_id})")
         
-        for method_name, init_func in initialization_methods:
-            print(f"カメラ初期化を試行中: {method_name}")
-            try:
-                self.cap = init_func()
-                
-                if self.cap is not None and self.cap.isOpened():
-                    print(f"カメラ初期化成功: {method_name}")
-                    break
-                else:
-                    print(f"カメラ初期化失敗: {method_name}")
-                    if self.cap is not None:
-                        self.cap.release()
-                        self.cap = None
-            except Exception as e:
-                print(f"カメラ初期化エラー ({method_name}): {e}")
-                if self.cap is not None:
-                    self.cap.release()
-                    self.cap = None
-        
-        if self.cap is None or not self.cap.isOpened():
-            print("すべてのカメラ初期化方法が失敗しました")
-            print("以下を確認してください:")
-            print("1. カメラが正しく接続されているか")
-            print("2. 他のアプリケーションがカメラを使用していないか")
-            print("3. カメラドライバが正しくインストールされているか")
-            print("4. Windowsのプライバシー設定でカメラアクセスが許可されているか")
-            return False
-            
-        # カメラ設定を適用
+        # 最も成功率の高い方法を最初に試行
         try:
+            # DSHOWバックエンドを優先（Windowsで最も安定）
+            self.cap = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
+            
+            if self.cap.isOpened():
+                print("カメラ初期化成功 (DSHOW)")
+            else:
+                print("DSHOW失敗、デフォルトを試行中...")
+                self.cap.release()
+                self.cap = cv2.VideoCapture(device_id)
+                
+                if not self.cap.isOpened():
+                    print("カメラ初期化失敗")
+                    return False
+                print("カメラ初期化成功 (デフォルト)")
+            
+            # 基本設定のみ適用（高速化のため）
             width, height = self.camera_config["size"]
             fps = self.camera_config["fps"]
             
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             self.cap.set(cv2.CAP_PROP_FPS, fps)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 遅延削減
             
-            # バッファサイズを小さくして遅延を減らす
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            
-            # 実際の設定値を確認
-            actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
-            
-            print(f"カメラ設定完了:")
-            print(f"  解像度: {actual_width}x{actual_height} (設定: {width}x{height})")
-            print(f"  FPS: {actual_fps} (設定: {fps})")
-            
-            # テストフレームを取得
-            print("テストフレーム取得中...")
-            for i in range(3):
-                ret, frame = self.cap.read()
-                if ret:
-                    print(f"  テストフレーム {i+1}: 成功 (サイズ: {frame.shape})")
-                    break
-                else:
-                    print(f"  テストフレーム {i+1}: 失敗")
-            
+            # テストフレーム取得を1回のみに削減
+            ret, frame = self.cap.read()
             if not ret:
-                print("テストフレームの取得に失敗しました")
+                print("テストフレーム取得失敗")
                 return False
             
-            # 露出・ゲイン設定の推奨
-            print("\n重要: カメラの露出・ゲイン・ホワイトバランスを手動固定することを推奨します")
-            print("自動調整により色域がぶれ、誤検知が増加する可能性があります")
+            actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             
+            print(f"カメラ設定完了: {actual_width}x{actual_height}")
             return True
             
         except Exception as e:
-            print(f"カメラ設定エラー: {e}")
+            print(f"カメラ初期化エラー: {e}")
             return False
     
     def release_camera(self):
@@ -411,9 +513,9 @@ class WebcamMonitor:
     
     def run(self):
         """監視システムを実行"""
-        print("Webカメラ監視システムを開始します")
+        print("Webカメラ監視システム（高速化版）を開始します")
         
-        if not self.initialize_camera():
+        if not self.initialize_camera_fast():
             print("カメラの初期化に失敗しました")
             return
         
@@ -422,7 +524,7 @@ class WebcamMonitor:
         start_time = time.time()
         
         # ウィンドウ作成
-        cv2.namedWindow("Webcam Monitor", cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow("Webcam Monitor (Fast)", cv2.WINDOW_AUTOSIZE)
         
         try:
             while self.running:
@@ -435,6 +537,9 @@ class WebcamMonitor:
                 # フレーム処理
                 self.detector.process_frame(frame)
                 
+                # バッチ通知の定期チェック（画面フリーズ対策）
+                self.detector.check_and_send_batch_notification()
+                
                 # デバッグ用オーバーレイを描画
                 display_frame = self.detector.draw_debug_overlay(frame)
                 
@@ -443,9 +548,9 @@ class WebcamMonitor:
                 elapsed_time = time.time() - start_time
                 current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
                 
-                info_text = f"Frame: {frame_count}, FPS: {current_fps:.1f}"
+                info_text = f"Frame: {frame_count}, FPS: {current_fps:.1f} [FAST MODE]"
                 cv2.putText(display_frame, info_text, (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 
                 # 操作説明を描画
                 instructions = [
@@ -462,35 +567,32 @@ class WebcamMonitor:
                 
                 # フレーム表示
                 try:
-                    cv2.imshow("Webcam Monitor", display_frame)
+                    cv2.imshow("Webcam Monitor (Fast)", display_frame)
                 except cv2.error:
-                    # ウィンドウが閉じられた場合
                     print("ウィンドウが閉じられました")
                     break
                 
                 # キー入力処理
                 key = cv2.waitKey(1) & 0xFF
                 
-                # ウィンドウの状態をチェック（×ボタン対応）
+                # ウィンドウの状態をチェック
                 try:
-                    # ウィンドウプロパティを取得してウィンドウの存在を確認
-                    if cv2.getWindowProperty("Webcam Monitor", cv2.WND_PROP_VISIBLE) < 1:
+                    if cv2.getWindowProperty("Webcam Monitor (Fast)", cv2.WND_PROP_VISIBLE) < 1:
                         print("ウィンドウが閉じられました")
                         break
                 except:
-                    # ウィンドウが存在しない場合
                     print("ウィンドウが閉じられました")
                     break
                 
-                if key == ord('q') or key == 27:  # 'q'キーまたはESCキー
+                if key == ord('q') or key == 27:
                     break
                 elif key == ord('s'):
                     self.save_frame(frame, frame_count)
                 elif key == ord('r'):
                     self.reset_lamp_history()
                 
-                # 統計情報出力
-                if frame_count % 100 == 0:
+                # 統計情報出力（頻度を下げて高速化）
+                if frame_count % 200 == 0:
                     print(f"処理フレーム数: {frame_count}, FPS: {current_fps:.1f}")
                     self.print_lamp_status()
                 
@@ -500,25 +602,32 @@ class WebcamMonitor:
             self.running = False
             cv2.destroyAllWindows()
             self.release_camera()
-            print("Webカメラ監視システムを終了しました")
+            print("Webカメラ監視システム（高速化版）を終了しました")
     
     def save_frame(self, frame: np.ndarray, frame_count: int):
         """現在のフレームを保存"""
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"webcam_frame_{timestamp}_{frame_count:06d}.png"
+        filename = f"webcam_frame_fast_{timestamp}_{frame_count:06d}.png"
         cv2.imwrite(filename, frame)
         print(f"フレームを保存しました: {filename}")
     
     def reset_lamp_history(self):
         """ランプ履歴をリセット"""
-        for lamp_id in range(1, 13):
-            self.detector.lamp_history[lamp_id].clear()
-            self.detector.lamp_statuses[lamp_id].state = "UNKNOWN"
-            self.detector.lamp_statuses[lamp_id].confidence = 0.0
-        print("ランプ履歴をリセットしました")
+        if self.detector._initialized:
+            for lamp_id in range(1, 13):
+                self.detector.lamp_history[lamp_id].clear()
+                self.detector.lamp_statuses[lamp_id].state = "UNKNOWN"
+                self.detector.lamp_statuses[lamp_id].confidence = 0.0
+            print("ランプ履歴をリセットしました")
+        else:
+            print("まだ初期化されていません")
     
     def print_lamp_status(self):
         """現在のランプ状態を出力"""
+        if not self.detector._initialized:
+            print("まだランプ状態が初期化されていません")
+            return
+            
         print("\n=== 現在のランプ状態 ===")
         for lamp_id in range(1, 13):
             status = self.detector.lamp_statuses[lamp_id]
@@ -527,13 +636,12 @@ class WebcamMonitor:
 
 def main():
     """メイン関数"""
-    print("=== Webカメラ監視システム ===")
-    print("このシステムはWebカメラからランプを監視し、異常を検出します")
+    print("=== Webカメラ監視システム（高速化版） ===")
+    print("起動時間を最適化したバージョンです")
     print("事前にconfig.yamlでROI座標を設定してください")
-    print("roi_tool.pyを使用してROIを設定することを推奨します")
     print()
     
-    monitor = WebcamMonitor()
+    monitor = WebcamMonitorFast()
     monitor.run()
 
 if __name__ == "__main__":
