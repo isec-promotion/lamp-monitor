@@ -449,9 +449,10 @@ class WebcamMonitor:
                 
                 # 操作説明を描画
                 instructions = [
-                    "Press 'q' to quit",
+                    "Press 'q' or ESC to quit",
                     "Press 's' to save current frame",
-                    "Press 'r' to reset lamp history"
+                    "Press 'r' to reset lamp history",
+                    "Click X button to close window"
                 ]
                 
                 for i, instruction in enumerate(instructions):
@@ -460,11 +461,28 @@ class WebcamMonitor:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 # フレーム表示
-                cv2.imshow("Webcam Monitor", display_frame)
+                try:
+                    cv2.imshow("Webcam Monitor", display_frame)
+                except cv2.error:
+                    # ウィンドウが閉じられた場合
+                    print("ウィンドウが閉じられました")
+                    break
                 
                 # キー入力処理
                 key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
+                
+                # ウィンドウの状態をチェック（×ボタン対応）
+                try:
+                    # ウィンドウプロパティを取得してウィンドウの存在を確認
+                    if cv2.getWindowProperty("Webcam Monitor", cv2.WND_PROP_VISIBLE) < 1:
+                        print("ウィンドウが閉じられました")
+                        break
+                except:
+                    # ウィンドウが存在しない場合
+                    print("ウィンドウが閉じられました")
+                    break
+                
+                if key == ord('q') or key == 27:  # 'q'キーまたはESCキー
                     break
                 elif key == ord('s'):
                     self.save_frame(frame, frame_count)

@@ -193,6 +193,8 @@ class ROITool:
         print("  d: 現在のランプのROIを削除")
         print("  s: 設定を保存")
         print("  q: 終了")
+        print("  ESC: 終了")
+        print("  ×ボタン: ウィンドウを閉じて終了")
         print()
         
         if not self.initialize_camera():
@@ -217,12 +219,28 @@ class ROITool:
                 display_frame = self.draw_overlay(frame)
                 
                 # フレーム表示
-                cv2.imshow("ROI Tool", display_frame)
+                try:
+                    cv2.imshow("ROI Tool", display_frame)
+                except cv2.error:
+                    # ウィンドウが閉じられた場合
+                    print("ウィンドウが閉じられました")
+                    break
                 
                 # キー入力処理
                 key = cv2.waitKey(1) & 0xFF
                 
-                if key == ord('q'):
+                # ウィンドウの状態をチェック（×ボタン対応）
+                try:
+                    # ウィンドウプロパティを取得してウィンドウの存在を確認
+                    if cv2.getWindowProperty("ROI Tool", cv2.WND_PROP_VISIBLE) < 1:
+                        print("ウィンドウが閉じられました")
+                        break
+                except:
+                    # ウィンドウが存在しない場合
+                    print("ウィンドウが閉じられました")
+                    break
+                
+                if key == ord('q') or key == 27:  # 'q'キーまたはESCキー
                     break
                 elif key == ord('n'):
                     if self.current_lamp_id < 12:
