@@ -18,6 +18,7 @@ class SyntheticDashboard:
         self.blink_states = [False] * 12   # 点滅状態
         self.blink_timer = time.time()
         self.blink_on = True
+        self.window_closed = False  # ウィンドウが閉じられたかのフラグ
         
         # 設定値の取得
         self.window_size = self.config["synthetic"]["window_size"]
@@ -27,6 +28,8 @@ class SyntheticDashboard:
         
         # ウィンドウ作成
         cv2.namedWindow("Synthetic Dashboard", cv2.WINDOW_AUTOSIZE)
+        # ウィンドウクローズコールバックを設定
+        cv2.setWindowProperty("Synthetic Dashboard", cv2.WND_PROP_TOPMOST, 0)
         
     def load_config(self, config_path: str) -> Dict:
         """設定ファイルを読み込み"""
@@ -164,17 +167,35 @@ class SyntheticDashboard:
         print("  g: 全て緑, r: 全て赤")
         print("  b: 一部点滅, a: ランダム赤")
         print("  s: 画像保存, q: 終了")
+        print("  ×ボタン: ウィンドウを閉じて終了")
         
         try:
             while True:
                 # フレーム生成と表示
                 frame = self.create_frame()
-                cv2.imshow("Synthetic Dashboard", frame)
+                
+                try:
+                    cv2.imshow("Synthetic Dashboard", frame)
+                except cv2.error:
+                    # ウィンドウが閉じられた場合
+                    print("ウィンドウが閉じられました")
+                    break
                 
                 # キー入力処理
                 key = cv2.waitKey(30) & 0xFF
                 
-                if key == ord('q'):
+                # ウィンドウの状態をチェック（×ボタン対応）
+                try:
+                    # ウィンドウプロパティを取得してウィンドウの存在を確認
+                    if cv2.getWindowProperty("Synthetic Dashboard", cv2.WND_PROP_VISIBLE) < 1:
+                        print("ウィンドウが閉じられました")
+                        break
+                except:
+                    # ウィンドウが存在しない場合
+                    print("ウィンドウが閉じられました")
+                    break
+                
+                if key == ord('q') or key == 27:  # 'q'キーまたはESCキー
                     break
                 elif key == ord('1'):
                     self.toggle_lamp(1)
