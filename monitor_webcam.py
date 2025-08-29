@@ -296,17 +296,70 @@ class WebcamMonitor:
             print(f"設定ファイルの読み込みエラー: {e}")
             raise
     
+    def try_device_name_initialization(self):
+        """デバイス名を使用してカメラを初期化"""
+        # C922 Pro Stream Webcamの一般的なデバイス名パターン
+        device_names = [
+            "C922 Pro Stream Webcam",
+            "Logitech C922 Pro Stream Webcam",
+            "USB Camera",
+            "Integrated Camera",
+        ]
+        
+        for device_name in device_names:
+            try:
+                cap = cv2.VideoCapture(device_name, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    print(f"デバイス名 '{device_name}' で接続成功")
+                    return cap
+                cap.release()
+            except:
+                continue
+        
+        return None
+    
     def initialize_camera(self) -> bool:
-        """カメラを初期化"""
+        """カメラを初期化（複数の方法を試行）"""
+        device_id = self.camera_config["device_id"]
+        
+        # 複数のバックエンドと初期化方法を試行
+        initialization_methods = [
+            ("デフォルト", lambda: cv2.VideoCapture(device_id)),
+            ("DSHOW", lambda: cv2.VideoCapture(device_id, cv2.CAP_DSHOW)),
+            ("MSMF", lambda: cv2.VideoCapture(device_id, cv2.CAP_MSMF)),
+            ("デバイス名指定", lambda: self.try_device_name_initialization()),
+        ]
+        
+        for method_name, init_func in initialization_methods:
+            print(f"カメラ初期化を試行中: {method_name}")
+            try:
+                self.cap = init_func()
+                
+                if self.cap is not None and self.cap.isOpened():
+                    print(f"カメラ初期化成功: {method_name}")
+                    break
+                else:
+                    print(f"カメラ初期化失敗: {method_name}")
+                    if self.cap is not None:
+                        self.cap.release()
+                        self.cap = None
+            except Exception as e:
+                print(f"カメラ初期化エラー ({method_name}): {e}")
+                if self.cap is not None:
+                    self.cap.release()
+                    self.cap = None
+        
+        if self.cap is None or not self.cap.isOpened():
+            print("すべてのカメラ初期化方法が失敗しました")
+            print("以下を確認してください:")
+            print("1. カメラが正しく接続されているか")
+            print("2. 他のアプリケーションがカメラを使用していないか")
+            print("3. カメラドライバが正しくインストールされているか")
+            print("4. Windowsのプライバシー設定でカメラアクセスが許可されているか")
+            return False
+            
+        # カメラ設定を適用
         try:
-            device_id = self.camera_config["device_id"]
-            self.cap = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
-            
-            if not self.cap.isOpened():
-                print(f"カメラ {device_id} を開けませんでした")
-                return False
-            
-            # カメラ設定
             width, height = self.camera_config["size"]
             fps = self.camera_config["fps"]
             
@@ -314,14 +367,31 @@ class WebcamMonitor:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             self.cap.set(cv2.CAP_PROP_FPS, fps)
             
+            # バッファサイズを小さくして遅延を減らす
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
             # 実際の設定値を確認
             actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
             
-            print(f"カメラを初期化しました:")
+            print(f"カメラ設定完了:")
             print(f"  解像度: {actual_width}x{actual_height} (設定: {width}x{height})")
             print(f"  FPS: {actual_fps} (設定: {fps})")
+            
+            # テストフレームを取得
+            print("テストフレーム取得中...")
+            for i in range(3):
+                ret, frame = self.cap.read()
+                if ret:
+                    print(f"  テストフレーム {i+1}: 成功 (サイズ: {frame.shape})")
+                    break
+                else:
+                    print(f"  テストフレーム {i+1}: 失敗")
+            
+            if not ret:
+                print("テストフレームの取得に失敗しました")
+                return False
             
             # 露出・ゲイン設定の推奨
             print("\n重要: カメラの露出・ゲイン・ホワイトバランスを手動固定することを推奨します")
@@ -330,7 +400,7 @@ class WebcamMonitor:
             return True
             
         except Exception as e:
-            print(f"カメラ初期化エラー: {e}")
+            print(f"カメラ設定エラー: {e}")
             return False
     
     def release_camera(self):
