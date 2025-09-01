@@ -1,243 +1,106 @@
-// Cloudflare Workers - ランプ監視システム用通知ハンドラー
-addEventListener("fetch", (event) => {
-  event.respondWith(handleRequest(event.request));
-});
+/**
+ * Cloudflare Workers - ランプ監視システム用通知ハンドラー（HMAC署名検証版）
+ * * 機能:
+ * 1. POSTリクエストのみ受け付ける
+ * 2. HTTPヘッダーから 'x-signature-256' を読み取る
+ * 3. リクエストボディと環境変数 'SECRET_KEY' を使って署名を検証する
+ * 4. 署名が有効な場合のみ、環境変数 'DISCORD_WEBHOOK_URL' に通知を転送する
+ */
+export default {
+  async fetch(request, env) {
+    // POST以外のリクエストは拒否
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
 
-// 共通鍵（config.yamlのsecretと一致させる）
-const ALLOWED_SECRET = "pA!M.k_)!$G.vABQ9aeQmPNM";
+    // 1. ヘッダーから署名を取得 (小文字で取得するのが一般的)
+    const signature = request.headers.get("x-signature-256");
+    if (!signature) {
+      console.log("署名ヘッダー (x-signature-256) が見つかりませんでした。");
+      return new Response("Unauthorized - Signature Required", { status: 401 });
+    }
 
-// Discord Webhook URL（環境変数から取得することを推奨）
-const DISCORD_WEBHOOK_URL =
-  "https://discord.com/api/webhooks/1410427865874305057/FfrSwdzlxyjlemcXPfzek-oKjYgomypzr75-kp9VeocIK5Uak0aQNBoToPUEhQ43rkAg";
+    // 2. リクエストボディの生テキストを取得
+    const bodyText = await request.clone().text();
 
-async function handleRequest(request) {
-  // CORS対応
-  if (request.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Signature",
-      },
-    });
-  }
+    // 3. 署名が有効か検証
+    const isValid = await verifySignature(bodyText, signature, env.SECRET_KEY);
 
-  if (request.method !== "POST") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
-  }
+    if (!isValid) {
+      console.log("無効な署名です。");
+      return new Response("Unauthorized - Invalid Signature", { status: 401 });
+    }
 
-  let requestData = {};
-  let signature = "";
+    // 4. 署名が正しければ、Discordへ通知
+    try {
+      const body = JSON.parse(bodyText);
+      const message =
+        body.message ||
+        `ランプ ${body.lamp_id} が ${body.state} 状態になりました！`;
+      const payload = { content: message };
 
-  try {
-    // リクエストボディを取得
-    const body = await request.text();
-    requestData = JSON.parse(body);
+      const discordResponse = await fetch(env.DISCORD_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    // HMAC署名検証（オプション）
-    signature = request.headers.get("X-Signature") || "";
-
-    if (ALLOWED_SECRET && signature) {
-      const isValidSignature = await verifySignature(
-        body,
-        signature,
-        ALLOWED_SECRET
-      );
-      if (!isValidSignature) {
-        console.log("署名検証失敗:", signature);
-        return new Response("Unauthorized - Invalid Signature", {
-          status: 401,
-          headers: { "Access-Control-Allow-Origin": "*" },
+      if (!discordResponse.ok) {
+        console.log(
+          "Discordへの送信に失敗しました:",
+          await discordResponse.text()
+        );
+        return new Response("Failed to send Discord notification.", {
+          status: 500,
         });
       }
-    } else if (ALLOWED_SECRET && !signature) {
-      console.log("署名が必要ですが提供されていません");
-      return new Response("Unauthorized - Signature Required", {
-        status: 401,
-        headers: { "Access-Control-Allow-Origin": "*" },
-      });
+
+      return new Response("Notification sent successfully.", { status: 200 });
+    } catch (e) {
+      console.log("JSONのパースまたは通知処理中にエラー:", e.message);
+      return new Response("Bad Request", { status: 400 });
     }
+  },
+};
 
-    console.log("受信データ:", requestData);
-  } catch (e) {
-    console.log("JSON parse error:", e);
-    return new Response("Bad Request", {
-      status: 400,
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
-  }
-
-  // 通知メッセージを作成
-  const message = createNotificationMessage(requestData);
-
-  // Discord Embedを作成
-  const embed = createDiscordEmbed(requestData);
-
-  const payload = {
-    content: message,
-    embeds: [embed],
-  };
-
-  // Discord Webhookに送信
-  try {
-    const discordResponse = await fetch(DISCORD_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!discordResponse.ok) {
-      const errorText = await discordResponse.text();
-      console.log("Discord送信エラー:", errorText);
-      return new Response("Discord通知送信に失敗しました。", {
-        status: 500,
-        headers: { "Access-Control-Allow-Origin": "*" },
-      });
-    }
-
-    console.log("Discord通知送信成功");
-    return new Response("Discord通知を送信しました。", {
-      status: 200,
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
-  } catch (error) {
-    console.log("Discord送信例外:", error);
-    return new Response("Discord通知送信中にエラーが発生しました。", {
-      status: 500,
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
-  }
-}
-
-function createNotificationMessage(data) {
-  const lampId = data.lamp_id || "不明";
-  const state = data.state || "不明";
-  const confidence = data.confidence || 0;
-  const timestamp = data.timestamp || Math.floor(Date.now() / 1000);
-
-  // 日本時間に変換
-  const date = new Date(timestamp * 1000);
-  const jstDate = new Date(date.getTime() + 9 * 60 * 60 * 1000); // UTC+9
-  const timeString = jstDate.toLocaleString("ja-JP");
-
-  let emoji = "";
-  let statusText = "";
-
-  switch (state) {
-    case "RED":
-      emoji = "🔴";
-      statusText = "異常";
-      break;
-    case "GREEN":
-      emoji = "🟢";
-      statusText = "正常";
-      break;
-    default:
-      emoji = "⚪";
-      statusText = "不明";
-      break;
-  }
-
-  return (
-    `${emoji} **制御盤ランプ監視アラート**\n` +
-    `ランプ ${lampId} が **${statusText}** 状態になりました！\n` +
-    `時刻: ${timeString}`
-  );
-}
-
-function createDiscordEmbed(data) {
-  const lampId = data.lamp_id || "不明";
-  const state = data.state || "不明";
-  const confidence = (data.confidence || 0) * 100;
-  const timestamp = data.timestamp || Math.floor(Date.now() / 1000);
-  const message = data.message || "";
-
-  let color = 0x808080; // グレー（不明）
-  let title = "";
-
-  switch (state) {
-    case "RED":
-      color = 0xff0000; // 赤
-      title = "🚨 異常検出";
-      break;
-    case "GREEN":
-      color = 0x00ff00; // 緑
-      title = "✅ 正常復旧";
-      break;
-    default:
-      title = "❓ 状態不明";
-      break;
-  }
-
-  return {
-    title: title,
-    description: message,
-    color: color,
-    fields: [
-      {
-        name: "ランプ番号",
-        value: `L${lampId}`,
-        inline: true,
-      },
-      {
-        name: "状態",
-        value: state,
-        inline: true,
-      },
-      {
-        name: "信頼度",
-        value: `${confidence.toFixed(1)}%`,
-        inline: true,
-      },
-    ],
-    timestamp: new Date(timestamp * 1000).toISOString(),
-    footer: {
-      text: "制御盤ランプ監視システム",
-    },
-  };
-}
+// --- 署名検証のためのヘルパー関数 ---
 
 async function verifySignature(body, signature, secret) {
-  try {
-    // 署名形式: "sha256=ハッシュ値"
-    if (!signature.startsWith("sha256=")) {
-      return false;
-    }
-
-    const receivedHash = signature.substring(7);
-
-    // HMAC-SHA256で署名を計算
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const messageData = encoder.encode(body);
-
-    const cryptoKey = await crypto.subtle.importKey(
-      "raw",
-      keyData,
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-
-    const signatureBuffer = await crypto.subtle.sign(
-      "HMAC",
-      cryptoKey,
-      messageData
-    );
-    const computedHash = Array.from(new Uint8Array(signatureBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
-    // 定数時間比較
-    return computedHash === receivedHash;
-  } catch (error) {
-    console.log("署名検証エラー:", error);
+  // 環境変数が設定されているか確認
+  if (typeof secret !== "string" || secret.length === 0) {
+    console.log("エラー: 環境変数 'SECRET_KEY' が設定されていません。");
     return false;
   }
+
+  // 署名が 'sha256=...' の形式か確認
+  const [algo, sigHex] = signature.split("=");
+  if (algo !== "sha256" || !sigHex) {
+    return false;
+  }
+
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const sigBuffer = hexToBuffer(sigHex);
+    const data = encoder.encode(body);
+    return await crypto.subtle.verify("HMAC", key, sigBuffer, data);
+  } catch (e) {
+    console.log("署名検証中に内部エラー:", e.message);
+    return false;
+  }
+}
+
+// 16進数文字列をArrayBufferに変換する関数
+function hexToBuffer(hex) {
+  const buffer = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    buffer[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return buffer;
 }
