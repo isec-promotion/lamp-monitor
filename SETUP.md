@@ -19,7 +19,6 @@ lamp-monitor/
 ├── cloudflare-worker-simple.js # シンプル版Cloudflare Workers用スクリプト
 └── utils/                    # ユーティリティツール
     ├── camera_debug.py       # カメラデバッグツール
-    ├── monitor_webcam_old.py # 旧版Webカメラ監視
     └── test_camera.py        # カメラテストツール
 ```
 

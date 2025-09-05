@@ -18,14 +18,19 @@
 ## ディレクトリ構成
 
 ```
-
-C:\lamp-monitor
-├─ config.yaml               # 設定（解像度/閾値/通知URL/ROI 等）
-├─ sim\_dashboard.py          # 12 灯の合成ダッシュボード生成
-├─ monitor\_synthetic.py      # 合成フレームを判定→Workersへ通知
-├─ monitor\_webcam.py         # Webカメラ入力を判定→Workersへ通知
-└─ roi\_tool.py               # 画面上ドラッグで ROI を保存（任意）
-
+lamp-monitor/
+├── README.md                 # プロジェクト概要
+├── SETUP.md                  # セットアップガイド
+├── config.yaml               # 設定ファイル
+├── sim_dashboard.py          # 合成ダッシュボード（テスト用）
+├── monitor_synthetic.py      # 合成フレーム監視
+├── monitor_webcam.py         # Webカメラ監視
+├── roi_tool.py               # ROI設定ツール
+├── cloudflare-worker.js      # Cloudflare Workers用スクリプト
+├── cloudflare-worker-simple.js # シンプル版Cloudflare Workers用スクリプト
+└── utils/                    # ユーティリティツール
+    ├── camera_debug.py       # カメラデバッグツール
+    └── test_camera.py        # カメラテストツール
 ```
 
 ---
