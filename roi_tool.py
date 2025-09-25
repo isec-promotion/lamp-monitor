@@ -1,6 +1,35 @@
 #!/usr/bin/env python3
 """
-ROI設定ツール - マウスドラッグでランプのROI領域を設定し、config.yamlに保存
+ROI設定ツール（Webカメラ用）
+------------------------------------------------------------
+■ 目的
+制御盤の12個ランプに対応する検知領域（ROI: [x, y, w, h]）を
+実映像上でマウスドラッグして作成・編集し、config.yaml に保存する。
+
+■ 概要
+- Webカメラからプレビューを取得
+- ランプIDごとに矩形ROIを描画して登録（lamp_1 ～ lamp_12）
+- 既存のROIを読み込み・上書き保存に対応
+- 保存時に config.yaml の rois セクションへ反映
+
+■ 操作
+- マウス左ドラッグ : ROIを新規作成／更新
+- n : 次のランプIDへ（1→12）
+- p : 前のランプIDへ（12→1）
+- d : 現在のランプIDのROIを削除
+- s : 設定を保存（config.yaml へ書き込み）
+- q / ESC : 終了
+- ウィンドウ × : 終了
+
+■ 前提設定（config.yaml 例）
+- camera.device_id, camera.size([width, height]), camera.fps
+  ※ WindowsはCAP_DSHOW, Raspberry Pi/LinuxはCAP_V4L2が安定しやすい
+- 既存の rois.lamp_1..lamp_12 があれば読み込んで編集可能
+
+■ ヒント
+- ROIは後段の検知器でそのまま使用されるため、ランプだけを含む最小矩形で設定
+- 露出やブレを考慮し、余白は最小限に
+- 認識が不安定な場合は後で何度でも上書き保存可能
 """
 
 import cv2

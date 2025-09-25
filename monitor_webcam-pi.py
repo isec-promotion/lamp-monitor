@@ -1,6 +1,51 @@
 #!/usr/bin/env python3
 """
-Webカメラ監視システム（高速化版） - 起動時間を最適化
+Webカメラ監視システム（Raspberry Pi版・高速化）
+------------------------------------------------------------
+■ 背景
+12個のLEDランプが並ぶ制御盤で、ランプが「緑 → 赤」に変化したら異常としてDiscordへ通知。
+通知は Cloudflare Workers を経由し、Workers 側で HMAC 署名（X-Signature-256）を検証して
+Discord Webhook へ中継する。
+
+■ 本プログラムの目的
+Raspberry Pi に接続したカメラ（USB/UVC または Pi Camera）から実映像を取り込み、
+各ランプのROIをHSV解析して色変化をオンライン検知。誤検知を抑える多数決/信頼度/バッチ通知で、
+現場運用を想定した低遅延・軽量処理を行う。
+
+■ 主な機能
+- V4L2バックエンド（cv2.CAP_V4L2）で低遅延キャプチャ
+- ROIごとのHSV解析で RED / GREEN / UNKNOWN を判定
+- 履歴多数決＋最小信頼度しきい値でノイズ抑制
+- 近接した複数のRED検出をバッチ集約して通知
+- Cloudflare Workers へ HMAC署名付きJSONをPOST → Discord通知
+
+■ 使い方（概要）
+1) config.yaml を準備
+   - camera.device_id, camera.size, camera.fps
+   - rois.lamp_1..lamp_12（各 [x, y, w, h]）
+   - logic.*（明度/色相/形態学処理/履歴窓/しきい値）
+   - notify.worker_url, notify.secret, notify.min_interval_sec
+2) 本スクリプトを起動し、画面のROI枠と L{n}: 状態 表示で認識を確認
+3) RED判定時、所定の間隔・集約ルールで Workers → Discord へ通知
+
+■ Raspberry Pi 特有の注意
+- 権限: ユーザーを video グループに追加（例: `sudo usermod -aG video <user>`）
+- ドライバ/デバイス: `/dev/video*` を確認。UVC(USB)は即利用可。libcamera系は
+  `libcamera-vid` 等で動作確認の上、UVCブリッジを介すかUVCカメラ推奨
+- パフォーマンス: 解像度とfpsは必要最小限に。`gpu_mem`や冷却（ヒートシンク/ファン）を推奨
+- 電源/熱: 低電圧・サーマルスロットリングでfps低下が起き得るため5V3A級の電源を使用
+- 画面なし運用: `cv2.imshow`はX環境が必要。ヘッドレス運用時は保存ログ/Discord通知の確認で評価
+  （必要ならフレーム保存機能を有効活用）
+
+■ 操作（実行中のキー）
+- 'q' または ESC : 終了
+- 's' : 現在のフレームを保存（トラブル時の証跡）
+- 'r' : ランプ履歴をリセット（しきい値再調整時に利用）
+
+■ 想定ユースケース
+- 現場常時監視・早期異常検知
+- カメラ位置/露出/ROI/しきい値の現地チューニング
+- 合成版（疑似データ）から実カメラ版への移行テスト
 """
 
 import cv2

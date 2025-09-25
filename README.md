@@ -22,7 +22,7 @@ lamp-monitor/
 ├── README.md                 # プロジェクト概要
 ├── SETUP.md                  # セットアップガイド
 ├── config.yaml               # 設定ファイル
-├── sim_dashboard.py          # 合成ダッシュボード（テスト用）
+├── sim_dashboard.py          # 制御盤ランプのシミュレータ
 ├── monitor_synthetic.py      # 合成フレーム監視
 ├── monitor_webcam.py         # Webカメラ監視
 ├── roi_tool.py               # ROI設定ツール

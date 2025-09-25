@@ -1,6 +1,49 @@
 #!/usr/bin/env python3
 """
-Webカメラ監視システム（高速化版） - 起動時間を最適化
+Webカメラ監視システム（Windows版・高速化）
+------------------------------------------------------------
+■ 背景
+12個のLEDランプが並ぶ制御盤において、ランプが「緑 → 赤」に変化したら
+異常としてDiscordへ通知する。通知は Cloudflare Workers を経由して送信し、
+Workers 側でHMAC署名検証を行う。
+
+■ 本プログラムの目的
+実機のWebカメラ映像から各ランプ領域（ROI）を解析し、色変化をオンライン検知。
+誤検知を抑えるための多数決・信頼度しきい値・バッチ通知を備え、
+検知からDiscord通知までの本番フローをエンドツーエンドで動作させる。
+
+■ 主な機能
+- Webカメラ（Windows/DirectShow優先）からフレーム取得（低遅延設定）
+- ROIごとのHSV解析で RED / GREEN / UNKNOWN を判定
+- フレーム履歴に基づく多数決フィルタ＆最小信頼度チェックでノイズ抑制
+- RED検出のバッチ集約（近接発生をまとめて通知）
+- Cloudflare Workers へ HMAC署名付きJSONをPOST → Discord通知
+
+■ 使い方（概要）
+1) config.yaml を用意して以下を設定
+   - camera.device_id, camera.size, camera.fps
+   - rois.lamp_1..lamp_12（各 [x, y, w, h]）
+   - logic.*（明度/色相/形態学処理/履歴窓/しきい値）
+   - notify.worker_url, notify.secret, notify.min_interval_sec
+2) 本スクリプトを起動
+3) 画面上のROI枠と状態表示（L{n}: RED/GREEN/UNKNOWN）で認識状況を確認
+4) 赤検出時、所定の間隔・集約ルールでWorkers→Discordへ通知
+
+■ 操作（実行中のキー）
+- 'q' または ESC : 終了
+- 's' : 現在のフレームを保存（トラブル時のログ取得用）
+- 'r' : ランプ履歴をリセット（しきい値調整時の再収束に利用）
+
+■ 注意事項
+- 照明環境やカメラ露出によりHSV分布が変化するため、logicの各しきい値は現場調整必須
+- カメラ入力遅延・フレームドロップを避けるため、解像度・fpsは必要最小限を推奨
+- Workers 側の署名検証（X-Signature-256）とDiscord Webhookの疎通を事前に確認
+- 本プログラムはWindows向けにDirectShow(CAP_DSHOW)優先で初期化（失敗時はデフォルト）
+
+■ 想定ユースケース
+- 本番環境での常時監視
+- しきい値・ROI調整やカメラ設置位置の現地チューニング
+- 疑似版（合成フレーム）からの移行後テスト
 """
 
 import cv2
