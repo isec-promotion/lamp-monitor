@@ -54,6 +54,8 @@ import requests
 import hashlib
 import hmac
 import json
+import os
+import re
 from collections import deque
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
@@ -488,16 +490,85 @@ class WebcamMonitorFast:
         
         print("初期化完了")
     
+    def load_env_file(self, env_path: str = ".env"):
+        """.envファイルを読み込んで環境変数に設定"""
+        if not os.path.exists(env_path):
+            print(f".envファイル ({env_path}) が見つかりません。環境変数が直接設定されていることを確認してください。")
+            return
+        
+        try:
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    
+                    # 空行やコメント行をスキップ
+                    if not line or line.startswith('#'):
+                        continue
+                    
+                    # KEY=VALUE 形式をパース
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+                        
+                        # クォートを除去
+                        if (value.startswith('"') and value.endswith('"')) or \
+                           (value.startswith("'") and value.endswith("'")):
+                            value = value[1:-1]
+                        
+                        # 環境変数に設定（既存の環境変数を上書きしない）
+                        if key not in os.environ:
+                            os.environ[key] = value
+                            print(f".envから読み込み: {key}")
+                        else:
+                            print(f"環境変数 {key} は既に設定されているため、.envの値をスキップします")
+                    else:
+                        print(f".envファイルの{line_num}行目の形式が正しくありません: {line}")
+        
+        except Exception as e:
+            print(f".envファイルの読み込みエラー: {e}")
+    
+    def expand_environment_variables(self, config: Dict) -> Dict:
+        """設定内の環境変数を展開"""
+        def expand_value(value):
+            if isinstance(value, str):
+                # ${VAR_NAME} 形式の環境変数を展開
+                def replace_env_var(match):
+                    var_name = match.group(1)
+                    env_value = os.getenv(var_name)
+                    if env_value is None:
+                        raise ValueError(f"環境変数 '{var_name}' が設定されていません")
+                    return env_value
+                
+                return re.sub(r'\$\{([^}]+)\}', replace_env_var, value)
+            elif isinstance(value, dict):
+                return {k: expand_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [expand_value(item) for item in value]
+            else:
+                return value
+        
+        return expand_value(config)
+    
     def load_config(self, config_path: str) -> Dict:
         """設定ファイルを読み込み"""
         try:
+            # .envファイルを読み込み
+            self.load_env_file()
+            
             with open(config_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
+                # 環境変数を展開
+                config = self.expand_environment_variables(config)
+                return config
         except FileNotFoundError:
             print(f"設定ファイル {config_path} が見つかりません")
             raise
         except yaml.YAMLError as e:
             print(f"設定ファイルの読み込みエラー: {e}")
+            raise
+        except ValueError as e:
+            print(f"環境変数の展開エラー: {e}")
             raise
     
     def initialize_camera_fast(self) -> bool:

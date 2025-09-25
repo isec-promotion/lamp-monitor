@@ -40,7 +40,6 @@ lamp-monitor/
 - **Windows 11**
 - **Python 3.11**（推奨）
 - Cloudflare Workers の受け口 URL（例: `https://<your-worker>.workers.dev/notify`）
-  - 任意で共通鍵（`SHARED_SECRET`）による署名検証を実装可能
 - Web カメラ（UVC 準拠推奨）※合成のみなら不要
 
 ---

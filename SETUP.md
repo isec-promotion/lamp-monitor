@@ -35,28 +35,77 @@ pip install opencv-python numpy requests pyyaml
 1. Cloudflare Workers で新しいワーカーを作成
 2. `cloudflare-worker.js`の内容をコピー
 3. 以下の値を実際の値に変更：
-   - `ALLOWED_SECRET`: 任意の共通鍵（強力なパスワードを推奨）
+   - `YOUR_SECRET_KEY`: 任意の共通鍵（強力なパスワードを推奨）
    - `DISCORD_WEBHOOK_URL`: Discord の Webhook URL
 
 ```javascript
 // 例
-const ALLOWED_SECRET = "pA!M.k_)!$G.vABQ9aeQmPNM";
+const YOUR_SECRET_KEY = "your_secret_key";
 const DISCORD_WEBHOOK_URL =
   "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN";
 ```
 
 4. ワーカーをデプロイし、URL を取得（例: `https://your-worker.workers.dev`）
 
-### 3. 設定ファイルの更新
+### 3. 環境変数の設定
 
-`config.yaml`を編集：
+セキュリティのため、共通鍵は環境変数で管理します。以下の方法から選択してください：
+
+#### 方法 1: .env ファイルを使用（推奨）
+
+1. `.env.example`ファイルを`.env`にコピー：
+
+   ```bash
+   copy .env.example .env
+   ```
+
+2. `.env`ファイルを編集して実際の値を設定：
+
+   ```
+   LAMP_MONITOR_WORKER_URL=https://your-worker.workers.dev
+   LAMP_MONITOR_SECRET=your_actual_secret_here
+   ```
+
+3. `.env`ファイルは自動的に読み込まれます
+
+#### 方法 2: 直接環境変数を設定
+
+**Windows (コマンドプロンプト):**
+
+```cmd
+set LAMP_MONITOR_SECRET=your_secret_key
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:LAMP_MONITOR_SECRET="your_secret_key"
+```
+
+**Linux/macOS:**
+
+```bash
+export LAMP_MONITOR_SECRET="your_secret_key"
+```
+
+**注意事項:**
+
+- `.env`ファイルは`.gitignore`に追加してリポジトリにコミットしないでください
+- 直接設定した環境変数は`.env`ファイルの値より優先されます
+- 環境変数が設定されていない場合、アプリケーションは起動時にエラーになります
+
+### 4. 設定ファイルの更新
+
+`config.yaml`は既に環境変数を使用するように設定されています：
 
 ```yaml
 notify:
-  worker_url: "https://your-worker.workers.dev/notify" # 実際のWorkers URL
-  secret: "pA!M.k_)!$G.vABQ9aeQmPNM" # Workersと同じ共通鍵
+  worker_url: "${LAMP_MONITOR_WORKER_URL}" # 環境変数から取得
+  secret: "${LAMP_MONITOR_SECRET}" # 環境変数から取得
   min_interval_sec: 300 # 通知間隔（秒）
 ```
+
+**注意:** 環境変数`LAMP_MONITOR_WORKER_URL`と`LAMP_MONITOR_SECRET`が設定されていない場合、アプリケーションは起動時にエラーになります。
 
 ### 4. Discord Webhook URL の取得
 

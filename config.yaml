@@ -8,8 +8,8 @@ camera:
 
 # 通知設定
 notify:
-  worker_url: "https://pi-detection.tai-nakamura.workers.dev" # Cloudflare Workers URL
-  secret: "pA!M.k_)!$G.vABQ9aeQmPNM" # 共通鍵（cloudflare-worker-simple.jsのALLOWED_SECRETと一致）
+  worker_url: "${LAMP_MONITOR_WORKER_URL}" # Cloudflare Workers URL（環境変数から取得）
+  secret: "${LAMP_MONITOR_SECRET}" # 共通鍵（環境変数から取得、cloudflare-worker-simple.jsのYOUR_SECRET_KEYと一致）
   min_interval_sec: 5 # 同一ランプの再通知最短間隔（秒）- テスト用に短縮
 
 # 判定ロジック設定
