@@ -98,6 +98,3 @@ Thumbs.db
 # Saved frames and logs
 webcam_frame_*.png
 *.log
-
-# Test files
-test_env_config.py

@@ -21,7 +21,9 @@
 lamp-monitor/
 ├── README.md                   # プロジェクト全体の概要と利用方法
 ├── SETUP.md                    # セットアップ手順書（環境構築ガイド）
-├── config.yaml                 # 設定ファイル（カメラ/ROI/通知/閾値など）
+├── RASPBERRY_PI_SETUP.md       # Raspberry Pi専用セットアップガイド
+├── config.yaml                 # 設定ファイル（カメラ/ROI/通知/閾値など、環境変数展開対応）
+├── .env.example                # 環境変数設定テンプレート
 ├── sim_dashboard.py            # 疑似ダッシュボード（制御盤ランプの模擬表示ツール）
 ├── monitor_test.py             # 疑似ランプ監視・通知テスター（カメラなしで動作確認）
 ├── monitor_webcam.py           # Webカメラ版ランプ監視（実カメラ映像を解析して通知）
@@ -30,7 +32,7 @@ lamp-monitor/
 ├── cloudflare-worker.js        # Cloudflare Workers（HMAC署名検証＋Discord通知）
 └── utils/                      # ユーティリティツール
     ├── camera_debug.py         # カメラデバッグツール
-    └── test_camera.py          # カメラテストツール
+    └── test_env_config.py      # 環境変数展開テストスクリプト
 ```
 
 ---
@@ -58,15 +60,60 @@ pip install opencv-python numpy requests pyyaml
 
 ---
 
+## 環境変数設定
+
+プロジェクトでは機密情報（Cloudflare Workers URL、共通鍵など）を環境変数で管理します。
+
+### 1) 環境変数ファイルの作成
+
+```powershell
+# .env.example を .env にコピー
+copy .env.example .env
+```
+
+### 2) .env ファイルの編集
+
+`.env` ファイルを開いて実際の値を設定：
+
+```bash
+# Cloudflare Workers URL
+LAMP_MONITOR_WORKER_URL=https://your-actual-worker.workers.dev
+
+# 通知用の共通鍵（Cloudflare WorkersのYOUR_SECRET_KEYと一致させる）
+LAMP_MONITOR_SECRET=your_actual_secret_key
+```
+
+### 3) 環境変数展開のテスト
+
+設定が正しく動作するかテスト：
+
+```powershell
+python .\test_env_config.py
+```
+
+**注意**: `.env` ファイルには機密情報が含まれるため、Git にコミットしないでください（`.gitignore` で除外済み）。
+
+---
+
 ## 設定（`config.yaml`）
+
+`config.yaml` では環境変数展開機能を使用して機密情報を安全に管理できます。`${VARIABLE_NAME}` 形式で環境変数を参照できます。
 
 - 主要項目
 
   - `camera.size` / `camera.fps`：処理負荷と検出安定のバランスで 1280×720 / 20fps 目安
-  - `notify.worker_url` / `notify.secret`：Cloudflare Workers のエンドポイントと共通鍵
+  - `notify.worker_url` / `notify.secret`：Cloudflare Workers のエンドポイントと共通鍵（環境変数から取得）
   - `notify.min_interval_sec`：同一ランプの再通知最短間隔
   - `logic.*`：HSV 閾値、形態学的処理サイズ、多数決窓フレーム数など
   - `rois`：ランプ 12 個の矩形座標（`x,y,w,h`）
+
+**環境変数展開の例**：
+
+```yaml
+notify:
+  worker_url: "${LAMP_MONITOR_WORKER_URL}" # .envファイルから取得
+  secret: "${LAMP_MONITOR_SECRET}" # .envファイルから取得
+```
 
 初期は合成用の ROI（サンプル値）で OK。Web カメラ実験時に `roi_tool.py` で実映像に合わせて更新します。
 

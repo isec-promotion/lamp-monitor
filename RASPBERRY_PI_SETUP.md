@@ -12,6 +12,45 @@
 - **インターネット接続**（Cloudflare Workers 連携用）
 - **Python 3.7 以上**
 
+## 環境変数設定
+
+プロジェクトでは機密情報（Cloudflare Workers URL、共通鍵など）を環境変数で管理します。
+
+### 1) 環境変数ファイルの作成
+
+```bash
+# .env.example を .env にコピー
+cp .env.example .env
+```
+
+### 2) .env ファイルの編集
+
+`.env` ファイルを編集して実際の値を設定：
+
+```bash
+nano .env
+```
+
+```bash
+# Cloudflare Workers URL
+LAMP_MONITOR_WORKER_URL=https://your-actual-worker.workers.dev
+
+# 通知用の共通鍵（Cloudflare WorkersのYOUR_SECRET_KEYと一致させる）
+LAMP_MONITOR_SECRET=your_actual_secret_key
+```
+
+### 3) 環境変数展開のテスト
+
+設定が正しく動作するかテスト：
+
+```bash
+python3 test_env_config.py
+```
+
+**注意**: `.env` ファイルには機密情報が含まれるため、Git にコミットしないでください（`.gitignore` で除外済み）。
+
+---
+
 ## セットアップ手順
 
 ### 1. システムの更新
@@ -151,10 +190,10 @@ else:
 
 ### 5. 設定ファイルの準備
 
-`config.yaml`ファイルを編集して、Raspberry Pi 環境に合わせて設定を調整します：
+`config.yaml`ファイルは環境変数展開機能を使用して機密情報を安全に管理します。`${VARIABLE_NAME}` 形式で環境変数を参照できます。
 
 ```bash
-# 設定ファイルを編集
+# 設定ファイルを編集（必要に応じて）
 nano config.yaml
 ```
 
@@ -167,10 +206,10 @@ camera:
   fps: 15 # フレームレートを下げて安定性を向上
   device_id: 0 # カメラデバイスID
 
-# 通知設定
+# 通知設定（環境変数から取得）
 notify:
-  worker_url: "https://your-worker.workers.dev" # 実際のWorkers URL
-  secret: "your-secret-key" # 実際の共通鍵
+  worker_url: "${LAMP_MONITOR_WORKER_URL}" # .envファイルから取得
+  secret: "${LAMP_MONITOR_SECRET}" # .envファイルから取得
   min_interval_sec: 300 # 通知間隔（秒）
 
 # 判定ロジック設定（Raspberry Pi向け調整）
@@ -178,6 +217,8 @@ logic:
   frames_window: 7 # フレーム窓を増やして安定性を向上
   morphological_kernel: 5 # ノイズ除去を強化
 ```
+
+**注意**: 環境変数`LAMP_MONITOR_WORKER_URL`と`LAMP_MONITOR_SECRET`が設定されていない場合、アプリケーションは起動時にエラーになります。
 
 ### 6. ROI 設定ツールの実行
 

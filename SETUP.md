@@ -10,7 +10,9 @@
 lamp-monitor/
 ├── README.md                   # プロジェクト全体の概要と利用方法
 ├── SETUP.md                    # セットアップ手順書（環境構築ガイド）
-├── config.yaml                 # 設定ファイル（カメラ/ROI/通知/閾値など）
+├── RASPBERRY_PI_SETUP.md       # Raspberry Pi専用セットアップガイド
+├── config.yaml                 # 設定ファイル（カメラ/ROI/通知/閾値など、環境変数展開対応）
+├── .env.example                # 環境変数設定テンプレート
 ├── sim_dashboard.py            # 疑似ダッシュボード（制御盤ランプの模擬表示ツール）
 ├── monitor_test.py             # 疑似ランプ監視・通知テスター（カメラなしで動作確認）
 ├── monitor_webcam.py           # Webカメラ版ランプ監視（実カメラ映像を解析して通知）
@@ -19,7 +21,7 @@ lamp-monitor/
 ├── cloudflare-worker.js        # Cloudflare Workers（HMAC署名検証＋Discord通知）
 └── utils/                      # ユーティリティツール
     ├── camera_debug.py         # カメラデバッグツール
-    └── test_camera.py          # カメラテストツール
+    └── test_env_config.py      # 環境変数展開テストスクリプト
 ```
 
 ## セットアップ手順
