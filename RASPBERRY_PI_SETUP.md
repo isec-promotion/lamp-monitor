@@ -211,14 +211,14 @@ python3 roi_tool.py
 
 **注意**: Raspberry Pi では、X11 環境が必要です。ヘッドレス環境の場合は、VNC や SSH X11 フォワーディングを使用してください。
 
-### 7. 合成ダッシュボードのテスト
+### 7. 疑似ダッシュボードのテスト
 
 まず、合成環境でシステムが正常に動作するかテストします：
 
 #### apt を使用した場合
 
 ```bash
-# 合成ダッシュボードを起動
+# 疑似ダッシュボードを起動
 python3 sim_dashboard.py
 ```
 
@@ -228,7 +228,7 @@ python3 sim_dashboard.py
 # 仮想環境をアクティベート
 source .venv/bin/activate
 
-# 合成ダッシュボードを起動
+# 疑似ダッシュボードを起動
 python3 sim_dashboard.py
 ```
 

@@ -8,18 +8,18 @@
 
 ```
 lamp-monitor/
-├── README.md                 # プロジェクト概要
-├── SETUP.md                  # このファイル（セットアップガイド）
-├── config.yaml               # 設定ファイル
-├── sim_dashboard.py          # 合成ダッシュボード（テスト用）
-├── monitor_synthetic.py      # 合成フレーム監視
-├── monitor_webcam.py         # Webカメラ監視
-├── roi_tool.py               # ROI設定ツール
-├── cloudflare-worker.js      # Cloudflare Workers用スクリプト
-├── cloudflare-worker-simple.js # シンプル版Cloudflare Workers用スクリプト
-└── utils/                    # ユーティリティツール
-    ├── camera_debug.py       # カメラデバッグツール
-    └── test_camera.py        # カメラテストツール
+├── README.md                   # プロジェクト全体の概要と利用方法
+├── SETUP.md                    # セットアップ手順書（環境構築ガイド）
+├── config.yaml                 # 設定ファイル（カメラ/ROI/通知/閾値など）
+├── sim_dashboard.py            # 疑似ダッシュボード（制御盤ランプの模擬表示ツール）
+├── monitor_synthetic.py        # 疑似ランプ監視・通知テスター（カメラなしで動作確認）
+├── monitor_webcam.py           # Webカメラ版ランプ監視（実カメラ映像を解析して通知）
+├── monitor_webcam-pi.py        # Raspberry Pi版ランプ監視（実カメラ映像を解析して通知）
+├── roi_tool.py                 # ROI設定ツール（マウス操作でランプ検知領域を設定・保存）
+├── cloudflare-worker.js        # Cloudflare Workers（HMAC署名検証＋Discord通知）
+└── utils/                      # ユーティリティツール
+    ├── camera_debug.py         # カメラデバッグツール
+    └── test_camera.py          # カメラテストツール
 ```
 
 ## セットアップ手順
@@ -66,7 +66,7 @@ notify:
 
 ## 使用方法
 
-### ステップ 1: 合成ダッシュボードでテスト
+### ステップ 1: 疑似ダッシュボードでテスト
 
 ```bash
 python sim_dashboard.py

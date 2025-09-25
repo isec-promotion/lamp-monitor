@@ -12,7 +12,7 @@
 動作確認用（テスト）プログラムである。
 
 ■ 概要
-- 合成フレーム（ダッシュボード）を生成し、各ランプ領域の色を解析
+- ダッシュボードを生成し、各ランプ領域の色を解析
 - ランプ状態が緑から赤になったと判定された場合のみ通知イベントを発火
 - 通知はHMAC署名付きのJSONをCloudflare WorkersへPOSTし、WorkersからDiscordへ中継
 
@@ -275,7 +275,7 @@ class SyntheticMonitor:
         
     def create_test_frame(self) -> np.ndarray:
         """テスト用のフレームを生成"""
-        # 合成ダッシュボードと同じサイズのフレームを作成
+        # 疑似ダッシュボードと同じサイズのフレームを作成
         window_size = self.detector.config["synthetic"]["window_size"]
         frame = np.full((window_size[1], window_size[0], 3), (50, 50, 50), dtype=np.uint8)
         
@@ -358,7 +358,7 @@ class SyntheticMonitor:
 def main():
     """メイン関数"""
     print("=== 合成フレーム監視システム ===")
-    print("このシステムは合成ダッシュボードと連携して動作します")
+    print("このシステムは疑似ダッシュボードと連携して動作します")
     print("先に sim_dashboard.py を起動してください")
     print()
     
