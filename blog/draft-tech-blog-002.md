@@ -41,7 +41,7 @@
 
 ```
 ┌─────────────────────┐    ┌─────────────────────┐
-│  sim_dashboard.py   │    │ monitor_synthetic.py│
+│  sim_dashboard.py   │    │ monitor_test.py      │
 │  (疑似ダッシュボード)  │    │   (監視・判定)      │
 │                     │    │                     │
 │ ・12個のランプ表示   │    │ ・フレーム取得      │
