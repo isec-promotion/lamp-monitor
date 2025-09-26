@@ -34,9 +34,65 @@ import requests
 import hashlib
 import hmac
 import json
+import os
+import re
 from collections import deque
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
+
+def load_env_file(env_path: str = ".env"):
+    """.envファイルを読み込んで環境変数に設定"""
+    if not os.path.exists(env_path):
+        return
+    
+    try:
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                
+                # 空行やコメント行をスキップ
+                if not line or line.startswith('#'):
+                    continue
+                
+                # KEY=VALUE 形式をパース
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # クォートを除去
+                    if (value.startswith('"') and value.endswith('"')) or \
+                       (value.startswith("'") and value.endswith("'")):
+                        value = value[1:-1]
+                    
+                    # 環境変数に設定（既存の環境変数を上書きしない）
+                    if key not in os.environ:
+                        os.environ[key] = value
+    
+    except Exception as e:
+        print(f".envファイルの読み込みエラー: {e}")
+
+def expand_environment_variables(config: Dict) -> Dict:
+    """設定内の環境変数を展開"""
+    def expand_value(value):
+        if isinstance(value, str):
+            # ${VAR_NAME} 形式の環境変数を展開
+            def replace_env_var(match):
+                var_name = match.group(1)
+                env_value = os.getenv(var_name)
+                if env_value is None:
+                    raise ValueError(f"環境変数 '{var_name}' が設定されていません")
+                return env_value
+            
+            return re.sub(r'\$\{([^}]+)\}', replace_env_var, value)
+        elif isinstance(value, dict):
+            return {k: expand_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [expand_value(item) for item in value]
+        else:
+            return value
+    
+    return expand_value(config)
 
 @dataclass
 class LampStatus:
@@ -51,7 +107,15 @@ class LampDetector:
     
     def __init__(self, config_path: str = "config.yaml"):
         """初期化"""
+        # .envファイルを読み込み
+        load_env_file()
+        
+        # 設定ファイルを読み込み
         self.config = self.load_config(config_path)
+        
+        # 環境変数を展開
+        self.config = expand_environment_variables(self.config)
+        
         self.lamp_history = {i: deque(maxlen=self.config["logic"]["frames_window"]) 
                            for i in range(1, 13)}
         self.lamp_statuses = {i: LampStatus(i, "UNKNOWN", 0.0) for i in range(1, 13)}
@@ -64,6 +128,7 @@ class LampDetector:
         print("ランプ検出システムを初期化しました")
         print(f"フレーム窓サイズ: {self.logic_config['frames_window']}")
         print(f"通知間隔: {self.notify_config['min_interval_sec']}秒")
+        print(f"通知先URL: {self.notify_config['worker_url']}")
     
     def load_config(self, config_path: str) -> Dict:
         """設定ファイルを読み込み"""

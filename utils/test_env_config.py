@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+test_env_config.py
 環境変数展開のテストスクリプト
 """
 
@@ -8,8 +9,14 @@ import os
 import re
 from typing import Dict
 
-def load_env_file(env_path: str = ".env"):
+def load_env_file(env_path: str = None):
     """.envファイルを読み込んで環境変数に設定"""
+    if env_path is None:
+        # スクリプトの親ディレクトリ（プロジェクトルート）の.envファイルを探す
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        env_path = os.path.join(project_root, ".env")
+    
     if not os.path.exists(env_path):
         print(f".envファイル ({env_path}) が見つかりません。")
         return
@@ -83,7 +90,12 @@ def test_config_loading():
         
         # config.yamlを読み込み
         print("3. config.yamlを読み込み中...")
-        with open('config.yaml', 'r', encoding='utf-8') as f:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        config_path = os.path.join(project_root, 'config.yaml')
+        
+        print(f"   config.yamlのパス: {config_path}")
+        with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         
         print(f"4. 展開前のsecret: {config['notify']['secret']}")
