@@ -109,7 +109,7 @@ def check_opencv_info():
     print(cv2.getBuildInformation())
 
 def main():
-    print("C922 Pro Stream Webcam デバッグツール")
+    print("ウェブカメラデバッグツール")
     print("=" * 50)
     
     # プライバシー設定の確認
